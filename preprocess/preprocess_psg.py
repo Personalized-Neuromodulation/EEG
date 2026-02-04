@@ -1989,13 +1989,12 @@ def find_eeg_files(folder_path):
                     for file in natsorted(files) if file.endswith('.bdf') or file.endswith('.edf')]
     return file_path_list
 
-def main(file_path):
+def process_fun(file_path):
     eeg = preprocess_EEG(file_path)
     clean_raw = eeg.process_main(useICA=False, useFASTER=True,remove_bad_channels=False,stim_analysis=False)
     return clean_raw
 
-if __name__ == '__main__':
-
+def main():
     # file_paths = natsorted(glob.glob(r"\\172.16.6.5\project\DATA\Sleep_Datasets\SHHS\shhs\polysomnography\edfs\shhs1\*.edf"))
     file_paths = find_eeg_files(r"\\172.16.6.5\project\DATA\Sleep_Datasets\SHHS\shhs\polysomnography\edfs")
     bids_save_dir = r"\\172.16.6.5\sleep\Neuromodulation\human\test"
@@ -2012,11 +2011,14 @@ if __name__ == '__main__':
     results = processor.batch_process_files(
         file_paths=file_paths,
         task="sleep",
-        process_func=main,
+        process_func=process_fun,
         pipeline_name="FASTER_pipeline",
         description="clean"
     )
 
     # 4. 查看汇总信息
     processor.print_summary()
-  
+
+if __name__ == '__main__':
+    mian()
+
