@@ -226,3 +226,18 @@ class CleanRawData:
         print(correlations)
         bad_channels = [ch_names[i] for i in range(len(ch_names)) if correlations[i] < self.corr_threshold]
         return bad_channels
+
+"""
+通用工具函数
+"""
+import os
+from natsort import natsorted
+
+def find_eeg_files(folder_path):
+    """递归查找指定目录下的所有 .bdf 或 .edf 文件"""
+    file_path_list = []
+    for root, dirs, files in os.walk(folder_path):
+        for file in natsorted(files):
+            if file.endswith('.bdf') or file.endswith('.edf'):
+                file_path_list.append(os.path.join(root, file))
+    return file_path_list
