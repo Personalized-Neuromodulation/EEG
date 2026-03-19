@@ -1,0 +1,71 @@
+# finetune config for sleep staging
+seed: 42
+task: 'classification'                # 任务类型
+model: 'SetTransformerForSleepStaging'
+
+channel_groups_path: '/mnt/DATA/poolab/jepa_dataset/EEG_JEPA/configs/channel_groups.json'
+pretrained_path: '/mnt/DATA/poolab/jepa_dataset/EEG_JEPA/checkpoints/SetTransformer/cos_loss_30s_2048_patch_256_20260314_113547/best_model/mp_rank_00_model_states.pt'
+deepspeed_config: /mnt/DATA/poolab/jepa_dataset/EEG_JEPA/configs/deepspeed_config.json
+
+# 数据路径
+# data_path: '/mnt/DATA/poolab/jepa_dataset/shhs/shhs_h5'          
+# labels_path: '/mnt/DATA/poolab/jepa_dataset/shhs/shhs_sleep_stages_labels'
+# split_path: '/mnt/DATA/poolab/jepa_dataset/EEG_JEPA/configs/dataset_split_cls_shhs.json'       
+
+# data_path: '/mnt/DATA/poolab/jepa_dataset/sleepedf/hdf5'          
+# labels_path: '/mnt/DATA/poolab/jepa_dataset/sleepedf/sleep_labels'    
+# split_path: '/mnt/DATA/poolab/jepa_dataset/EEG_JEPA/configs/dataset_split_cls_sedf.json'
+
+data_path: '/mnt/DATA/poolab/jepa_dataset/dcsm/hdf5'          
+labels_path: '/mnt/DATA/poolab/jepa_dataset/dcsm/sleep_labels'    
+split_path: '/mnt/DATA/poolab/jepa_dataset/EEG_JEPA/configs/dataset_split_cls_dcsm.json'
+
+# data_path: '/mnt/DATA/poolab/jepa_dataset/phys/hdf5'          
+# labels_path: '/mnt/DATA/poolab/jepa_dataset/phys/sleep_labels'    
+# split_path: '/mnt/DATA/poolab/jepa_dataset/EEG_JEPA/configs/dataset_split_cls_phys.json'
+
+# 输出目录
+output_dir: '/mnt/DATA/poolab/jepa_dataset/finetune_results'
+
+# 训练参数
+batch_size: 128  # 可根据显存调整
+epochs: 50                             # 微调epoch数
+lr: 5e-5                             # 学习率
+weight_decay: 0.001
+num_workers: 16
+
+# 模型参数（与预训练保持一致）
+in_channels: 1
+embed_dim: 2048
+num_heads: 8
+num_layers: 1
+jepa_depth: 1
+pooling_head: 8
+dropout: 0.4
+latent_dim: 2048                         # JEPA的patch_dim
+sampling_freq: 128
+patch_size: 256  #微调与预训练一致  
+num_patches: 15 #微调时可以根据输入改变                     
+max_seq_length: 1024                        # 序列最大长度（与预训练一致）
+freeze_backbone: false                       # 是否冻结预训练主干（仅训练池化层和分类头）
+
+
+# 睡眠分期特定参数
+num_sleep_stages: 5                        # 睡眠分期类别数（W, N1, N2, N3, REM）
+pooling_method: 'mean'                 # 序列池化方法: mean/max/first/attention
+
+# 模态配置（与预训练一致）
+modality_types: ["BAS", "EMG"] #"EKG",
+BAS_CHANNELS: 10
+RESP_CHANNELS: 7
+EKG_CHANNELS: 2
+EMG_CHANNELS: 4
+
+# 日志与保存
+save_interval: 10                           # 每多少个epoch保存一次检查点
+log_interval: 50
+use_wandb: true                             # 是否使用wandb记录
+wandb_project: 'sleep-staging-finetune'
+
+# 限制文件数量（调试用）
+max_files: null

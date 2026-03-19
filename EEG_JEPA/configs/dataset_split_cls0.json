@@ -1,0 +1,9 @@
+{
+  "train": [
+    "shhs1-203666.hdf5",
+    "shhs1-201972.hdf5"
+  ],
+  "validation": [
+    "shhs1-205680.hdf5"
+  ]
+}

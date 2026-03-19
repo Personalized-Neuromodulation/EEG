@@ -1,0 +1,11 @@
+{
+  "pretrain": [
+    "sub-0006150_ses-1_task-sleep_desc-clean_eeg.hdf5",
+    "sub-0006195_ses-1_task-sleep_desc-clean_eeg.hdf5",
+    "sub-0104022_ses-1_task-sleep_desc-clean_eeg.hdf5"
+  ],
+  "validation": [
+    "sub-0006417_ses-1_task-sleep_desc-clean_eeg.hdf5",
+    "te03-0496.hdf5"
+  ]
+}
