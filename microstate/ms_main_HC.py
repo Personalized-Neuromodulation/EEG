@@ -9,9 +9,7 @@ from scipy.signal import spectrogram, butter, filtfilt
 from matplotlib.ticker import ScalarFormatter
 import datetime
 
-# 添加项目根目录到路径
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-sys.path.insert(0, project_root)
+# 导入预处理
 import Microstate_analysis.monkey_preprocess_ms as monkey_preprocess_ms
 
 # ------------------ 配置参数 ------------------
