@@ -8,7 +8,7 @@ import glob
 from natsort import natsorted
 from utils import find_eeg_files
 from preprocess_main import preprocess_EEG
-from BIDS import BIDSProcessor  # 假设 BIDSProcessor 已存在
+from bids.BIDS import BIDSProcessor 
 
 def process_fun(file_path):
     """单个文件的处理函数（供 BIDSProcessor 调用）"""
