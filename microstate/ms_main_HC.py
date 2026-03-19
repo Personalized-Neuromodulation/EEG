@@ -20,7 +20,7 @@ CONFIG = {
     'input_dir': r"\\172.16.6.5\project\Monkey\HC_Monkey\source_data\01_Hanhan_171321\freemoving\2026-3-10",
     'output_dir': None,  # 如果为None，则在每个输入文件夹内创建结果子文件夹
     'fs': None,          # 采样率，None表示从数据自动获取
-    'do_microstate': False,      # 是否进行微状态分析（默认False，因为代码中注释了）
+    'do_microstate': False,      # 是否进行微状态分析（默认False）
     'plot_long_duration': True,  # 是否绘制长时图（10小时）
     'plot_short_duration': False, # 是否绘制短时图（如30秒）
     'short_duration_sec': 30,    # 短时图时长（秒）
