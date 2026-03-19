@@ -10,6 +10,19 @@ from sklearn.linear_model import RANSACRegressor
 from mne_faster import find_bad_channels, find_bad_epochs, find_bad_channels_in_epochs
 import concurrent.futures
 import neurokit2 as nk
+import os
+from natsort import natsorted
+
+# ------------------ 通用工具函数 ------------------
+def find_eeg_files(folder_path):
+    """递归查找指定目录下的所有 .bdf 或 .edf 文件"""
+    file_path_list = []
+    for root, dirs, files in os.walk(folder_path):
+        for file in natsorted(files):
+            if file.endswith('.bdf') or file.endswith('.edf'):
+                file_path_list.append(os.path.join(root, file))
+    return file_path_list
+
 
 # ------------------ 滤波与去趋势 ------------------
 def filter_detrend(raw):
@@ -227,17 +240,3 @@ class CleanRawData:
         bad_channels = [ch_names[i] for i in range(len(ch_names)) if correlations[i] < self.corr_threshold]
         return bad_channels
 
-"""
-通用工具函数
-"""
-import os
-from natsort import natsorted
-
-def find_eeg_files(folder_path):
-    """递归查找指定目录下的所有 .bdf 或 .edf 文件"""
-    file_path_list = []
-    for root, dirs, files in os.walk(folder_path):
-        for file in natsorted(files):
-            if file.endswith('.bdf') or file.endswith('.edf'):
-                file_path_list.append(os.path.join(root, file))
-    return file_path_list
