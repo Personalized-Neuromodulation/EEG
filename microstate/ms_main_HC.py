@@ -15,7 +15,6 @@ sys.path.insert(0, project_root)
 import Microstate_analysis.monkey_preprocess_ms as monkey_preprocess_ms
 
 # ------------------ 配置参数 ------------------
-# 这些参数可以通过命令行参数或配置文件修改
 CONFIG = {
     'input_dir': r"\\172.16.6.5\project\Monkey\HC_Monkey\source_data\01_Hanhan_171321\freemoving\2026-3-10",
     'output_dir': None,  # 如果为None，则在每个输入文件夹内创建结果子文件夹
