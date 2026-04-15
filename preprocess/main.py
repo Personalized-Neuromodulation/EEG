@@ -6,8 +6,8 @@ import os
 import argparse
 import glob
 from natsort import natsorted
-from utils import find_eeg_files
-from preprocess_main import preprocess_EEG
+from preprocessing_utils import find_eeg_files
+from preprocess import preprocess_EEG
 from bids.BIDS import BIDSProcessor 
 
 def process_fun(file_path):
