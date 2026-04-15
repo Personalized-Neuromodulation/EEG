@@ -1,0 +1,15 @@
+input_dir: //172.16.6.5/sleep/Monkey/test/src
+output_dir: //172.16.6.5/sleep/Monkey/test/result
+task: "sleep"
+session_prefix: "ses-"
+start_subject_id: 1
+useICA: false
+useFASTER: true
+remove_bad_channels: false
+stim_analysis: false
+n_jobs: 2
+file_extensions:
+  - "*.bdf"
+  - "*.BDF"
+  - "*.edf"
+  - "*.EDF"
