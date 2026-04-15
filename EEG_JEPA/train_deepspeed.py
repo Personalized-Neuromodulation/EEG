@@ -144,7 +144,8 @@ def train_epoch_deepspeed(wrapper, dataloader, epoch, config, split="train",
                 wrapper.backward(total_loss_iter)
                 wrapper.step()
                 # EMA 更新目标编码器
-                wrapper.module.update_target_encoder()
+                if hasattr(wrapper.module, 'jepa_encoder'):
+                        wrapper.module.jepa_encoder.update_target_encoder()
 
                 if train_writer and is_main_process and batch_idx == 0:
                     lr = wrapper.get_lr()[0][0]
