@@ -1,0 +1,10 @@
+global:
+  excel_path: "D:/DENOISE/DeepSeparator-main/test_read_single.xlsx" # excel文件路径
+  n_processes: 4
+  n_threads_per_exp: 8
+  force_reconcat: false
+  useICA: false
+  useFASTER: true
+  draw_psd: true
+  only_draw_psd: true
+  nperseg: 5   # 采样率倍数
