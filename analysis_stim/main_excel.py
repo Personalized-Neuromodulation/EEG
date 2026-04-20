@@ -1,6 +1,7 @@
 """
 实验使用进程池并行，每个实验内部使用线程池处理片段。
 全局配置从 config.yaml 读取，实验参数从 Excel 读取（包括时间偏移量）。
+新增 PSD 比较策略：1. before vs after (shift n)  2. before vs before (shift n)  3. after vs after (shift n)
 """
 
 import os
@@ -76,7 +77,6 @@ def collect_subsegment_tasks(annotations, segment_info, output_dir, index, file_
     os.makedirs(before_dir, exist_ok=True)
     os.makedirs(after_dir, exist_ok=True)
 
-    # 提取该片段内的所有 annotations
     seg_annotations = []
     for i, onset in enumerate(annotations.onset):
         if seg_start <= onset <= seg_end:
@@ -203,7 +203,6 @@ def cut_and_preprocess_threads(file_path, output_dir, file_prefix, useICA, useFA
     annotations = raw_full.annotations
     total_time = raw_full.times[-1] if raw_full.times.size > 0 else raw_full.n_times / raw_full.info['sfreq']
 
-    # 收集 markers
     markers = []
     seq_time = []
     flag = True
@@ -225,7 +224,6 @@ def cut_and_preprocess_threads(file_path, output_dir, file_prefix, useICA, useFA
         logging.error("未找到任何有效的标记")
         return 0, raw_info['sfreq']
 
-    # 配对片段
     segments = []
     for i in range(len(markers) - 1):
         current = markers[i]
@@ -264,8 +262,15 @@ def cut_and_preprocess_threads(file_path, output_dir, file_prefix, useICA, useFA
 
     return len(segments), raw_info['sfreq']
 
-# ==================== 绘制 PSD 比较图 ====================
-def draw_psd_single_wrapper(before_folder, after_folder, output_dir):
+# ==================== 绘制 PSD 比较图（支持多种策略） ====================
+def draw_psd_single_wrapper(before_folder, after_folder, output_dir, strategy='before_vs_after', shift_n=0):
+    """
+    绘制 PSD 比较图，支持三种策略：
+    - 'before_vs_after': 原始策略，before[i] vs after[i]（shift_n 无效）
+    - 'before_vs_after_shift': before[i] vs after[i+shift_n]
+    - 'before_vs_before_shift': before[i] vs before[i+shift_n]
+    - 'after_vs_after_shift': after[i] vs after[i+shift_n]
+    """
     os.makedirs(output_dir, exist_ok=True)
     before_psds, before_freqs = draw_module.extract_all_file_psds(before_folder, is_normalization=False)
     after_psds, after_freqs = draw_module.extract_all_file_psds(after_folder, is_normalization=False)
@@ -273,24 +278,83 @@ def draw_psd_single_wrapper(before_folder, after_folder, output_dir):
     if before_freqs is None or after_freqs is None:
         logging.error("无法获取频率轴")
         return
+
+    # 统一频率轴长度
     min_len = min(len(before_freqs), len(after_freqs))
     freqs = before_freqs[:min_len]
     before_psds = before_psds[:, :, :min_len] if before_psds.size > 0 else before_psds
     after_psds = after_psds[:, :, :min_len] if after_psds.size > 0 else after_psds
 
-    all_psds_conditions = [before_psds, after_psds]
+    n_before = before_psds.shape[0]
+    n_after = after_psds.shape[0]
+
+    # 根据策略生成配对数据
+    if strategy == 'before_vs_after':
+        # 原始配对：取相同索引，取 min(n_before, n_after)
+        n_pairs = min(n_before, n_after)
+        data1 = before_psds[:n_pairs, :, :]
+        data2 = after_psds[:n_pairs, :, :]
+        title_suffix = "Before vs After (paired)"
+        comp_name = "before_vs_after"
+    elif strategy == 'before_vs_after_shift':
+        shift_n = int(shift_n)
+        if shift_n < 0:
+            logging.error("shift_n 必须非负")
+            return
+        n_pairs = min(n_before, n_after - shift_n)
+        if n_pairs <= 0:
+            logging.error(f"shift_n={shift_n} 导致无有效配对，跳过")
+            return
+        data1 = before_psds[:n_pairs, :, :]
+        data2 = after_psds[shift_n:shift_n+n_pairs, :, :]
+        title_suffix = f"Before vs After (shift +{shift_n})"
+        comp_name = f"before_vs_after_shift_{shift_n}"
+    elif strategy == 'before_vs_before_shift':
+        shift_n = int(shift_n)
+        if shift_n <= 0:
+            logging.error("before_vs_before_shift 需要 shift_n > 0")
+            return
+        n_pairs = n_before - shift_n
+        if n_pairs <= 0:
+            logging.error(f"shift_n={shift_n} 超出 before 片段数，跳过")
+            return
+        data1 = before_psds[:n_pairs, :, :]
+        data2 = before_psds[shift_n:shift_n+n_pairs, :, :]
+        title_suffix = f"Before vs Before (shift +{shift_n})"
+        comp_name = f"before_vs_before_shift_{shift_n}"
+    elif strategy == 'after_vs_after_shift':
+        shift_n = int(shift_n)
+        if shift_n <= 0:
+            logging.error("after_vs_after_shift 需要 shift_n > 0")
+            return
+        n_pairs = n_after - shift_n
+        if n_pairs <= 0:
+            logging.error(f"shift_n={shift_n} 超出 after 片段数，跳过")
+            return
+        data1 = after_psds[:n_pairs, :, :]
+        data2 = after_psds[shift_n:shift_n+n_pairs, :, :]
+        title_suffix = f"After vs After (shift +{shift_n})"
+        comp_name = f"after_vs_after_shift_{shift_n}"
+    else:
+        logging.error(f"未知策略: {strategy}")
+        return
+
+    all_psds_conditions = [data1, data2]
+    # 临时修改 condition_names 和 condition_colors 用于绘图（可选）
+    # 这里直接使用原有绘图函数，但标题会显示 "Comparison"
     summary_dir, channel_dirs = draw_module.create_channel_summary_directories(output_dir, 1)
     plot_dir = os.path.join(output_dir, "psd_plots")
     os.makedirs(plot_dir, exist_ok=True)
 
     for channel_idx, channel_name in enumerate(draw_module.channel_names):
-        logging.info(f"绘制通道 {channel_name} 的PSD图")
+        logging.info(f"绘制通道 {channel_name} 的PSD图 ({title_suffix})")
+        # 调用原有绘图函数，但 condition_name 中包含策略信息
         draw_module.plot_channel_mean_with_sem(
             all_psds_conditions, freqs, channel_idx,
-            channel_name, plot_dir, "Comparison"
+            channel_name, plot_dir, title_suffix
         )
         src_file = os.path.join(plot_dir, f"{channel_name}_optimized.png")
-        dest_file = os.path.join(channel_dirs[channel_name], "psd_comparison.png")
+        dest_file = os.path.join(channel_dirs[channel_name], f"psd_{comp_name}.png")
         if os.path.exists(src_file):
             shutil.copy2(src_file, dest_file)
 
@@ -308,7 +372,9 @@ def process_concatenated_data_single_group(
     before_tmax_offset,
     after_tmin_offset,
     after_tmax_offset,
-    n_threads
+    n_threads,
+    psd_strategy,
+    psd_shift_n
 ):
     bdf_files = natsorted(bdf_files)
     file_prefix = extract_file_prefix(bdf_files)
@@ -359,8 +425,9 @@ def process_concatenated_data_single_group(
     if draw_psd:
         psd_output_dir = os.path.join(output_base_dir, f"{subject_name}_psd")
         os.makedirs(psd_output_dir, exist_ok=True)
-        logging.info(f"开始绘制PSD图...")
-        draw_psd_single_wrapper(before_folder, after_folder, psd_output_dir)
+        logging.info(f"开始绘制PSD图，策略: {psd_strategy}, shift_n={psd_shift_n}")
+        draw_psd_single_wrapper(before_folder, after_folder, psd_output_dir,
+                                strategy=psd_strategy, shift_n=psd_shift_n)
         logging.info(f"PSD图保存至: {psd_output_dir}")
 
     logging.info(f"被试 {subject_name} 处理完成!")
@@ -383,7 +450,7 @@ def process_single_experiment(row, global_cfg):
     after_tmin_offset = row.get('after_tmin_offset')
     after_tmax_offset = row.get('after_tmax_offset')
     if any(v is None or pd.isna(v) for v in [before_tmin_offset, before_tmax_offset, after_tmin_offset, after_tmax_offset]):
-        logging.error(f"实验 {subject_name} 缺少时间偏移量（before_tmin_offset等），跳过")
+        logging.error(f"实验 {subject_name} 缺少时间偏移量，跳过")
         return False
 
     # 检查是否已完成
@@ -410,6 +477,18 @@ def process_single_experiment(row, global_cfg):
     draw_module.nperseg = nperseg
     logging.info(f"设置 nperseg 为 {draw_module.nperseg}")
 
+    # 读取 PSD 比较策略参数（从 Excel 或 config）
+    psd_strategy = row.get('psd_strategy', global_cfg.get('psd_strategy', 'before_vs_after'))
+    psd_shift_n = row.get('psd_shift_n', global_cfg.get('psd_shift_n', 0))
+    # 验证策略有效性
+    valid_strategies = ['before_vs_after', 'before_vs_after_shift', 'before_vs_before_shift', 'after_vs_after_shift']
+    if psd_strategy not in valid_strategies:
+        logging.warning(f"无效策略 {psd_strategy}，使用默认 before_vs_after")
+        psd_strategy = 'before_vs_after'
+    if psd_strategy != 'before_vs_after' and psd_shift_n <= 0:
+        logging.warning(f"策略 {psd_strategy} 需要 shift_n > 0，当前为 {psd_shift_n}，强制设为 1")
+        psd_shift_n = 1
+
     # 其他全局参数
     draw_psd = global_cfg.get('draw_psd', True)
     only_draw_psd = global_cfg.get('only_draw_psd', False)
@@ -427,6 +506,7 @@ def process_single_experiment(row, global_cfg):
     logging.info(f"开始处理实验: {subject_name}, 共 {len(bdf_files)} 个BDF文件")
     logging.info(f"裁剪时间偏移: before({before_tmin_offset},{before_tmax_offset}) after({after_tmin_offset},{after_tmax_offset})")
     logging.info(f"片段时长: {segment_duration} 秒")
+    logging.info(f"PSD 策略: {psd_strategy}, shift_n={psd_shift_n}")
     logging.info(f"draw_psd={draw_psd}, only_draw_psd={only_draw_psd}")
 
     success = process_concatenated_data_single_group(
@@ -442,7 +522,9 @@ def process_single_experiment(row, global_cfg):
         before_tmax_offset=before_tmax_offset,
         after_tmin_offset=after_tmin_offset,
         after_tmax_offset=after_tmax_offset,
-        n_threads=n_threads
+        n_threads=n_threads,
+        psd_strategy=psd_strategy,
+        psd_shift_n=psd_shift_n
     )
     return success
 
@@ -471,7 +553,7 @@ def main():
     if n_threads_per_exp is None or n_threads_per_exp <= 0:
         n_threads_per_exp = max(1, multiprocessing.cpu_count() * 2 // n_processes)
 
-    # 将线程数放入全局配置，供 process_single_experiment 使用
+    # 将线程数放入全局配置
     global_cfg['n_threads_per_exp'] = n_threads_per_exp
 
     logging.info(f"共 {n_experiments} 个实验，将使用 {n_processes} 个进程并行，每个实验内部使用 {n_threads_per_exp} 个线程")
