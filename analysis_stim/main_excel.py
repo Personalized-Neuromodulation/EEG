@@ -1,7 +1,9 @@
 """
 实验使用进程池并行，每个实验内部使用线程池处理片段。
 全局配置从 config.yaml 读取，实验参数从 Excel 读取（包括时间偏移量）。
-新增 PSD 比较策略：1. before vs after (shift n)  2. before vs before (shift n)  3. after vs after (shift n)
+PSD 绘图：始终绘制平均 PSD±SEM（所有片段平均），保存到 output_dir/summary/ 下（无通道子文件夹）；
+同时根据 shift_n 参数，生成三种策略的 pair 图：
+  1. before vs after (shift n)  2. before vs before (shift n)  3. after vs after (shift n)
 """
 
 import os
@@ -20,6 +22,7 @@ import multiprocessing
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial
 from datetime import datetime, timezone
+import matplotlib.pyplot as plt
 
 sys.path.append(r'D:\code\time_frequency_analyse\time_frequency_analysis\analysis_stim_fun')
 sys.path.append(r'D:\code\time_frequency_analyse\time_frequency_analysis\analysis_stim_fun')
@@ -72,8 +75,8 @@ def collect_subsegment_tasks(annotations, segment_info, output_dir, index, file_
                              after_tmin_offset, after_tmax_offset):
     seg_start = segment_info['start_time']
     seg_end = segment_info['end_time']
-    before_dir = os.path.join(output_dir, "before_30_preprocessed")
-    after_dir = os.path.join(output_dir, "after_30_preprocessed")
+    before_dir = os.path.join(output_dir, "before_preprocessed")
+    after_dir = os.path.join(output_dir, "after_preprocessed")
     os.makedirs(before_dir, exist_ok=True)
     os.makedirs(after_dir, exist_ok=True)
 
@@ -100,7 +103,7 @@ def collect_subsegment_tasks(annotations, segment_info, output_dir, index, file_
 
     tasks = []
     if before_30_end:
-        output_path = os.path.join(before_dir, f"{file_prefix}_{index}_before_30.npy")
+        output_path = os.path.join(before_dir, f"{file_prefix}_{index}_before.npy")
         if not os.path.exists(output_path):
             tmin = before_30_start + before_tmin_offset
             tmax = before_30_start + before_tmax_offset
@@ -112,7 +115,7 @@ def collect_subsegment_tasks(annotations, segment_info, output_dir, index, file_
                 'info_file': os.path.join(before_dir, f"{file_prefix}_info.txt")
             })
     if after_30_start:
-        output_path = os.path.join(after_dir, f"{file_prefix}_{index}_after_30.npy")
+        output_path = os.path.join(after_dir, f"{file_prefix}_{index}_after.npy")
         if not os.path.exists(output_path):
             tmin = after_30_start + after_tmin_offset
             tmax = after_30_start + after_tmax_offset
@@ -262,14 +265,133 @@ def cut_and_preprocess_threads(file_path, output_dir, file_prefix, useICA, useFA
 
     return len(segments), raw_info['sfreq']
 
-# ==================== 绘制 PSD 比较图（支持多种策略） ====================
-def draw_psd_single_wrapper(before_folder, after_folder, output_dir, strategy='before_vs_after', shift_n=0):
+
+# ==================== 绘制所有 pair 图（三种策略） ====================
+def draw_all_pairwise_psd(before_psds, after_psds, freqs, prefix, output_dir, shift_n):
     """
-    绘制 PSD 比较图，支持三种策略：
-    - 'before_vs_after': 原始策略，before[i] vs after[i]（shift_n 无效）
-    - 'before_vs_after_shift': before[i] vs after[i+shift_n]
-    - 'before_vs_before_shift': before[i] vs before[i+shift_n]
-    - 'after_vs_after_shift': after[i] vs after[i+shift_n]
+    根据 shift_n 生成三种策略的 pair 图：
+    1. before vs after (shift n)
+    2. before vs before (shift n)
+    3. after vs after (shift n)
+    """
+    n_before = before_psds.shape[0]
+    n_after = after_psds.shape[0]
+    channel_names_list = draw_module.channel_names
+
+    # 策略列表
+    strategies = [
+        ('before_vs_after', 'Before', 'After', before_psds, after_psds),
+        ('before_vs_before', 'Before', 'Before', before_psds, before_psds),
+        ('after_vs_after', 'After', 'After', after_psds, after_psds)
+    ]
+
+    for strategy_name, label1, label2, data1, data2 in strategies:
+        # 确定有效 pair 数
+        if strategy_name == 'before_vs_after':
+            n_pairs = min(n_before, n_after - shift_n)
+            if n_pairs <= 0:
+                logging.warning(f"策略 {strategy_name} 无有效 pair (shift_n={shift_n})，跳过")
+                continue
+            pairs = [(i, i + shift_n) for i in range(n_pairs)]
+        elif strategy_name == 'before_vs_before':
+            n_pairs = n_before - shift_n
+            if n_pairs <= 0:
+                logging.warning(f"策略 {strategy_name} 无有效 pair (shift_n={shift_n})，跳过")
+                continue
+            pairs = [(i, i + shift_n) for i in range(n_pairs)]
+        else:  # after_vs_after
+            n_pairs = n_after - shift_n
+            if n_pairs <= 0:
+                logging.warning(f"策略 {strategy_name} 无有效 pair (shift_n={shift_n})，跳过")
+                continue
+            pairs = [(i, i + shift_n) for i in range(n_pairs)]
+
+        # 创建策略文件夹
+        strategy_dir = os.path.join(output_dir, "pairwise", strategy_name)
+        os.makedirs(strategy_dir, exist_ok=True)
+
+
+        # 遍历每个 pair 和每个通道
+        for start_idx, end_idx in pairs:
+            for ch_idx, ch_name in enumerate(channel_names_list):
+                if ch_name in ["Fp1","P7","P8","O2","F7","C4","T8"]:
+                    psd1 = data1[start_idx, ch_idx, :]
+                    psd2 = data2[end_idx, ch_idx, :]
+                    filename = f"{prefix}_{start_idx}_{end_idx}_{strategy_name}.png"
+                    output_ch_dir = os.path.join(strategy_dir, f"channel_{ch_name}")
+                    os.makedirs(output_ch_dir, exist_ok=True)
+                    draw_single_pair_psd(freqs, psd1, psd2, label1, label2, ch_name, output_ch_dir, filename)
+        logging.info(f"策略 {strategy_name} 生成 {len(pairs)} 个 pair 图，保存至 {strategy_dir}")
+
+
+from scipy.signal import savgol_filter
+
+def draw_single_pair_psd(freqs, psd1, psd2, label1, label2, channel_name, output_dir, filename,
+                         smooth=True, window_length=7, polyorder=3):
+    """
+    绘制单个 pair 的两条 PSD 曲线，可选 Savitzky-Golay 平滑。
+    
+    参数:
+        smooth: bool, 是否进行平滑
+        window_length: int, 平滑窗口长度（必须为奇数）
+        polyorder: int, 多项式阶数（必须小于 window_length）
+    """
+    if smooth:
+        n_points = len(psd1)
+        # 确保 window_length 为奇数且不超过数据长度
+        win_len = min(window_length, n_points if n_points % 2 == 1 else n_points - 1)
+        if win_len >= 3:
+            psd1_smooth = savgol_filter(psd1, window_length=win_len, polyorder=polyorder)
+            psd2_smooth = savgol_filter(psd2, window_length=win_len, polyorder=polyorder)
+        else:
+            psd1_smooth = psd1
+            psd2_smooth = psd2
+    else:
+        psd1_smooth = psd1
+        psd2_smooth = psd2
+
+    plt.figure(figsize=(12, 8))
+    plt.title(f"{channel_name} - {label1} vs {label2}", fontsize=14, weight='bold')
+    plt.plot(freqs, psd1_smooth, label=label1, linewidth=2.5, color='#1f77b4')
+    plt.plot(freqs, psd2_smooth, label=label2, linewidth=2.5, color='#d62728')
+    plt.xlabel("Frequency (Hz)", fontsize=10)
+    plt.ylabel("Power (dB)", fontsize=10)
+    plt.xlim(0.5, 40)
+    
+    # 自动调整 y 轴范围（使用原始数据或平滑后的数据均可）
+    all_vals = np.concatenate([psd1_smooth, psd2_smooth])
+    all_vals = all_vals[np.isfinite(all_vals)]
+    if len(all_vals) > 0:
+        y_min = np.percentile(all_vals, 1) - 5
+        y_max = np.percentile(all_vals, 99) + 5
+        plt.ylim(y_min, y_max)
+    
+    # 频带标记
+    freq_bands = {
+        r'$\delta$': (0.5, 4), r'$\theta$': (4, 8),
+        r'$\alpha$': (8, 12), r'$\beta$': (12, 30),
+        r'$\gamma$': (30, 40)
+    }
+    band_y = y_min + 0.02 * (y_max - y_min) if 'y_min' in locals() else -30
+    for band, (f_min, f_max) in freq_bands.items():
+        plt.axvspan(f_min, f_max, color='gray', alpha=0.05)
+        plt.text((f_min + f_max) / 2, band_y, band, fontsize=10, ha='center', va='bottom',
+                 bbox=dict(facecolor='white', alpha=0.7, pad=2, lw=0))
+    
+    plt.legend(loc='lower left', fontsize=8, frameon=True, framealpha=0.8)
+    plt.grid(True, linestyle='--', alpha=0.3)
+    plt.tight_layout()
+    
+    save_path = os.path.join(output_dir, filename)
+    plt.savefig(save_path, dpi=150)
+    plt.close()
+
+# ==================== 绘制 PSD 比较图（平均图 + pair 图） ====================
+def draw_psd_single_wrapper(before_folder, after_folder, output_dir, prefix, shift_n=1):
+    """
+    绘制 PSD 图：
+    1. 始终绘制平均 PSD ± SEM（所有片段平均），保存到 output_dir/summary/ 下（无通道子文件夹）。
+    2. 根据 shift_n 生成三种策略的 pair 图，保存到 output_dir/pairwise/{strategy}/ 下。
     """
     os.makedirs(output_dir, exist_ok=True)
     before_psds, before_freqs = draw_module.extract_all_file_psds(before_folder, is_normalization=False)
@@ -285,78 +407,23 @@ def draw_psd_single_wrapper(before_folder, after_folder, output_dir, strategy='b
     before_psds = before_psds[:, :, :min_len] if before_psds.size > 0 else before_psds
     after_psds = after_psds[:, :, :min_len] if after_psds.size > 0 else after_psds
 
-    n_before = before_psds.shape[0]
-    n_after = after_psds.shape[0]
+    # ==================== 1. 绘制平均图（无通道子文件夹） ====================
+    summary_dir = os.path.join(output_dir, "summary")
+    os.makedirs(summary_dir, exist_ok=True)
 
-    # 根据策略生成配对数据
-    if strategy == 'before_vs_after':
-        # 原始配对：取相同索引，取 min(n_before, n_after)
-        n_pairs = min(n_before, n_after)
-        data1 = before_psds[:n_pairs, :, :]
-        data2 = after_psds[:n_pairs, :, :]
-        title_suffix = "Before vs After (paired)"
-        comp_name = "before_vs_after"
-    elif strategy == 'before_vs_after_shift':
-        shift_n = int(shift_n)
-        if shift_n < 0:
-            logging.error("shift_n 必须非负")
-            return
-        n_pairs = min(n_before, n_after - shift_n)
-        if n_pairs <= 0:
-            logging.error(f"shift_n={shift_n} 导致无有效配对，跳过")
-            return
-        data1 = before_psds[:n_pairs, :, :]
-        data2 = after_psds[shift_n:shift_n+n_pairs, :, :]
-        title_suffix = f"Before vs After (shift +{shift_n})"
-        comp_name = f"before_vs_after_shift_{shift_n}"
-    elif strategy == 'before_vs_before_shift':
-        shift_n = int(shift_n)
-        if shift_n <= 0:
-            logging.error("before_vs_before_shift 需要 shift_n > 0")
-            return
-        n_pairs = n_before - shift_n
-        if n_pairs <= 0:
-            logging.error(f"shift_n={shift_n} 超出 before 片段数，跳过")
-            return
-        data1 = before_psds[:n_pairs, :, :]
-        data2 = before_psds[shift_n:shift_n+n_pairs, :, :]
-        title_suffix = f"Before vs Before (shift +{shift_n})"
-        comp_name = f"before_vs_before_shift_{shift_n}"
-    elif strategy == 'after_vs_after_shift':
-        shift_n = int(shift_n)
-        if shift_n <= 0:
-            logging.error("after_vs_after_shift 需要 shift_n > 0")
-            return
-        n_pairs = n_after - shift_n
-        if n_pairs <= 0:
-            logging.error(f"shift_n={shift_n} 超出 after 片段数，跳过")
-            return
-        data1 = after_psds[:n_pairs, :, :]
-        data2 = after_psds[shift_n:shift_n+n_pairs, :, :]
-        title_suffix = f"After vs After (shift +{shift_n})"
-        comp_name = f"after_vs_after_shift_{shift_n}"
-    else:
-        logging.error(f"未知策略: {strategy}")
-        return
-
-    all_psds_conditions = [data1, data2]
-    # 临时修改 condition_names 和 condition_colors 用于绘图（可选）
-    # 这里直接使用原有绘图函数，但标题会显示 "Comparison"
-    summary_dir, channel_dirs = draw_module.create_channel_summary_directories(output_dir, 1)
-    plot_dir = os.path.join(output_dir, "psd_plots")
-    os.makedirs(plot_dir, exist_ok=True)
-
+    all_psds_for_avg = [before_psds, after_psds]
+    plot_title = "Before vs After (Average ± SEM)"
     for channel_idx, channel_name in enumerate(draw_module.channel_names):
-        logging.info(f"绘制通道 {channel_name} 的PSD图 ({title_suffix})")
-        # 调用原有绘图函数，但 condition_name 中包含策略信息
+        logging.info(f"绘制平均PSD图: {channel_name}")
         draw_module.plot_channel_mean_with_sem(
-            all_psds_conditions, freqs, channel_idx,
-            channel_name, plot_dir, title_suffix
+            all_psds_for_avg, freqs, channel_idx,
+            channel_name, summary_dir, plot_title
         )
-        src_file = os.path.join(plot_dir, f"{channel_name}_optimized.png")
-        dest_file = os.path.join(channel_dirs[channel_name], f"psd_{comp_name}.png")
-        if os.path.exists(src_file):
-            shutil.copy2(src_file, dest_file)
+        # 图片已保存为 summary_dir/{channel_name}_optimized.png
+
+    # ==================== 2. 绘制 pair 图（三种策略） ====================
+
+    draw_all_pairwise_psd(before_psds, after_psds, freqs, prefix, output_dir, shift_n)
 
 # ==================== 处理单个实验（拼接、切割、预处理、绘图） ====================
 def process_concatenated_data_single_group(
@@ -373,7 +440,6 @@ def process_concatenated_data_single_group(
     after_tmin_offset,
     after_tmax_offset,
     n_threads,
-    psd_strategy,
     psd_shift_n
 ):
     bdf_files = natsorted(bdf_files)
@@ -413,21 +479,22 @@ def process_concatenated_data_single_group(
         logging.info(f"切割并预处理完成: {processed_segments} 个片段")
         logging.info(f"采样频率: {sfreq} Hz")
 
-        before_folder = os.path.join(cut_dir, "before_30_preprocessed")
-        after_folder = os.path.join(cut_dir, "after_30_preprocessed")
+        before_folder = os.path.join(cut_dir, "before_preprocessed")
+        after_folder = os.path.join(cut_dir, "after_preprocessed")
         if not os.path.exists(before_folder) or not os.path.exists(after_folder):
             logging.error(f"预处理文件夹不存在")
             return False
     else:
-        before_folder = os.path.join(cut_dir, "before_30_preprocessed")
-        after_folder = os.path.join(cut_dir, "after_30_preprocessed")
+        before_folder = os.path.join(cut_dir, "before_preprocessed")
+        after_folder = os.path.join(cut_dir, "after_preprocessed")
 
     if draw_psd:
         psd_output_dir = os.path.join(output_base_dir, f"{subject_name}_psd")
         os.makedirs(psd_output_dir, exist_ok=True)
-        logging.info(f"开始绘制PSD图，策略: {psd_strategy}, shift_n={psd_shift_n}")
+        logging.info(f"开始绘制PSD图，shift_n={psd_shift_n}")
         draw_psd_single_wrapper(before_folder, after_folder, psd_output_dir,
-                                strategy=psd_strategy, shift_n=psd_shift_n)
+                                prefix=file_prefix,
+                                shift_n=psd_shift_n)
         logging.info(f"PSD图保存至: {psd_output_dir}")
 
     logging.info(f"被试 {subject_name} 处理完成!")
@@ -477,17 +544,8 @@ def process_single_experiment(row, global_cfg):
     draw_module.nperseg = nperseg
     logging.info(f"设置 nperseg 为 {draw_module.nperseg}")
 
-    # 读取 PSD 比较策略参数（从 Excel 或 config）
-    psd_strategy = row.get('psd_strategy', global_cfg.get('psd_strategy', 'before_vs_after'))
-    psd_shift_n = row.get('psd_shift_n', global_cfg.get('psd_shift_n', 0))
-    # 验证策略有效性
-    valid_strategies = ['before_vs_after', 'before_vs_after_shift', 'before_vs_before_shift', 'after_vs_after_shift']
-    if psd_strategy not in valid_strategies:
-        logging.warning(f"无效策略 {psd_strategy}，使用默认 before_vs_after")
-        psd_strategy = 'before_vs_after'
-    if psd_strategy != 'before_vs_after' and psd_shift_n <= 0:
-        logging.warning(f"策略 {psd_strategy} 需要 shift_n > 0，当前为 {psd_shift_n}，强制设为 1")
-        psd_shift_n = 1
+    # 读取 PSD 偏移步数（从 Excel 或 config）
+    psd_shift_n = row.get('psd_shift_n', global_cfg.get('psd_shift_n', 1))
 
     # 其他全局参数
     draw_psd = global_cfg.get('draw_psd', True)
@@ -506,7 +564,7 @@ def process_single_experiment(row, global_cfg):
     logging.info(f"开始处理实验: {subject_name}, 共 {len(bdf_files)} 个BDF文件")
     logging.info(f"裁剪时间偏移: before({before_tmin_offset},{before_tmax_offset}) after({after_tmin_offset},{after_tmax_offset})")
     logging.info(f"片段时长: {segment_duration} 秒")
-    logging.info(f"PSD 策略: {psd_strategy}, shift_n={psd_shift_n}")
+    logging.info(f"PSD shift_n = {psd_shift_n}")
     logging.info(f"draw_psd={draw_psd}, only_draw_psd={only_draw_psd}")
 
     success = process_concatenated_data_single_group(
@@ -523,7 +581,6 @@ def process_single_experiment(row, global_cfg):
         after_tmin_offset=after_tmin_offset,
         after_tmax_offset=after_tmax_offset,
         n_threads=n_threads,
-        psd_strategy=psd_strategy,
         psd_shift_n=psd_shift_n
     )
     return success
